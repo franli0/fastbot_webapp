@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FastBot Control Interface</title>
+    
+    <!-- Bootstrap CSS -->
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" 
+          integrity="sha384-ggOyR0iXCbMQv3Xipma34MD+dH/1fQ784/j6cY/iJTQUOhcWr7x9JvoRxT2MZw1T" 
+          crossorigin="anonymous">
+    
+    <!-- Vue.js -->
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.min.js"></script>
+    
+    <!-- ROS Libraries -->
+    <script src="https://s3.eu-west-1.amazonaws.com/rosject.io/js/roslib.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/eventemitter2@5.0.1/lib/eventemitter2.min.js"></script>
+    
+    <!-- Camera streaming -->
+    <script type="text/javascript" src="mjpegcanvas.min.js"></script>
+    
+    <!-- ROS Visualization Libraries -->
+    <script src="https://s3.eu-west-1.amazonaws.com/rosject.io/js/easeljs.min.js"></script>
+    <script src="https://s3.eu-west-1.amazonaws.com/rosject.io/js/ros2d.min.js"></script>
+    <script src="https://s3.eu-west-1.amazonaws.com/rosject.io/js/threejs.min.js"></script>
+    <script src="https://s3.eu-west-1.amazonaws.com/rosject.io/js/ros3d.min.js"></script>
+    
+    <!-- Joystick -->
+    <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.1/dist/nipplejs.min.js"></script>
+    
+    <!-- FastBot Configuration -->
+    <script src="config.js"></script>
+    
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: #333;
+        }
+        
+        .main-container {
+            padding: 20px;
+        }
+        
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            border: none;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        
+        .header-card {
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            text-align: center;
+            padding: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .visualization-container {
+            height: 300px;
+            background: #1a1a1a;
+            border-radius: 10px;
+            border: 2px solid #333;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .camera-container {
+            height: 250px;
+            background: #000;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        
+        .joystick-container {
+            width: 200px;
+            height: 200px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            border: 3px solid #007bff;
+            position: relative;
+            margin: 0 auto;
+        }
+        
+        .status-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        
+        .status-value {
+            font-size: 1.3em;
+            font-weight: bold;
+            color: #ffd700;
+        }
+        
+        .waypoint-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .waypoint-btn {
+            background: linear-gradient(45deg, #007bff, #0056b3);
+            border: none;
+            color: white;
+            padding: 12px 8px;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+            font-size: 0.9em;
+        }
+        
+        .waypoint-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+        }
+        
+        .waypoint-btn:disabled {
+            background: #6c757d;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .emergency-btn {
+            background: linear-gradient(45deg, #dc3545, #c82333);
+            border: none;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: bold;
+            width: 100%;
+        }
+        
+        .emergency-btn:hover {
+            background: linear-gradient(45deg, #c82333, #b21e2f);
+        }
+        
+        .connection-status {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .connected {
+            background-color: #28a745;
+        }
+        
+        .disconnected {
+            background-color: #dc3545;
+        }
+        
+        .loading-text {
+            color: #6c757d;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        @media (max-width: 768px) {
+            .main-container {
+                padding: 10px;
+            }
+            
+            .visualization-container {
+                height: 200px;
+            }
+            
+            .camera-container {
+                height: 180px;
+            }
+            
+            .joystick-container {
+                width: 150px;
+                height: 150px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="container-fluid main-container">
+            <!-- Header -->
+            <div class="card header-card">
+                <h1 class="mb-3">FastBot Control Interface</h1>
+                <div class="row align-items-center">
+                    <div class="col-md-8">
+                        <div class="input-group">
+                            <div class="input-group-prepend">
+                                <span class="input-group-text">ROSBridge URL</span>
+                            </div>
+                            <input 
+                                type="text" 
+                                class="form-control" 
+                                v-model="rosbridge_address" 
+                                placeholder="Enter ROSBridge URL"
+                                :disabled="connected"
+                            >
+                            <div class="input-group-append">
+                                <button 
+                                    class="btn btn-primary" 
+                                    @click="connect"
+                                    :disabled="loading || connected"
+                                    v-if="!connected"
+                                >
+                                    Connect
+                                </button>
+                                <button 
+                                    class="btn btn-success" 
+                                    @click="disconnect"
+                                    v-if="connected"
+                                >
+                                    Disconnect
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4 text-right">
+                        <div class="d-inline-flex align-items-center">
+                            <span class="connection-status" :class="connected ? 'connected' : 'disconnected'"></span>
+                            <span class="font-weight-bold">{{ connected ? 'Connected' : 'Disconnected' }}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="row">
+                <!-- Left Column -->
+                <div class="col-lg-4 col-md-6">
+                    <!-- Map Visualization -->
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">Environment Map</h5>
+                            <div class="visualization-container" id="map-container">
+                                <div class="loading-text" v-if="!mapLoaded">
+                                    Loading map...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Robot Status -->
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">Robot Status</h5>
+                            <div class="status-card">
+                                <div class="row">
+                                    <div class="col-6">
+                                        Speed<br>
+                                        <span class="status-value">{{ robotStatus.speed.toFixed(2) }} m/s</span>
+                                    </div>
+                                    <div class="col-6">
+                                        Battery<br>
+                                        <span class="status-value">{{ robotStatus.battery }}%</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="status-card">
+                                Position<br>
+                                <span class="status-value">
+                                    X: {{ robotStatus.position.x.toFixed(2) }}m, 
+                                    Y: {{ robotStatus.position.y.toFixed(2) }}m
+                                </span>
+                            </div>
+                            <div class="status-card">
+                                Orientation<br>
+                                <span class="status-value">{{ robotStatus.orientation.toFixed(1) }} degrees</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Middle Column -->
+                <div class="col-lg-4 col-md-6">
+                    <!-- 3D Robot Model -->
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">Robot 3D Model</h5>
+                            <div class="visualization-container" id="robot-container">
+                                <div class="loading-text" v-if="!robot3DLoaded">
+                                    Loading 3D model...
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Manual Control -->
+                    <div class="card">
+                        <div class="card-body text-center">
+                            <h5 class="card-title">Manual Control</h5>
+                            <div class="joystick-container" id="joystick-container"></div>
+                            <div class="mt-3">
+                                <span class="badge badge-info">
+                                    Mode: {{ controlMode }}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column -->
+                <div class="col-lg-4 col-md-12">
+                    <!-- Camera Feed -->
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">Camera Image Stream</h5>
+                            <div class="camera-container" id="camera-container">
+                                <div class="loading-text" v-if="!cameraLoaded">
+                                    {{ cameraStatus }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Waypoint Navigation -->
+                    <div class="card">
+                        <div class="card-body">
+                            <h5 class="card-title">Navigation Waypoints</h5>
+                            <div class="waypoint-grid">
+                                <button 
+                                    v-for="(waypoint, key) in waypoints"
+                                    :key="key"
+                                    class="btn waypoint-btn"
+                                    @click="goToWaypoint(key)"
+                                    :disabled="!connected || isNavigating"
+                                >
+                                    {{ waypoint.name }}
+                                </button>
+                            </div>
+                            <button 
+                                class="btn emergency-btn"
+                                @click="emergencyStop"
+                                :disabled="!connected"
+                            >
+                                EMERGENCY STOP
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        // Load main.js with cache busting to avoid caching issues
+        // This is done the same way as your reference files
+        var script = document.createElement('script');
+        script.type = 'text/javascript';
+        script.src = 'main.js?v=5.' + Date.now();
+        document.head.appendChild(script);
+    </script>
+</body>
+</html>
