@@ -1,384 +1,312 @@
 var app = new Vue({
     el: '#app',
+    // storing the state of the page
     data: {
-        // Connection
-        rosbridge_address: '',
         connected: false,
-        loading: false,
         ros: null,
-        
-        // Robot Status
+        logs: [],
+        loading: false,
+        rosbridge_address: '',
+        port: '9090',
+        // Robot Status for Task 2
         robotStatus: {
             speed: 0.0,
             position: { x: 0.0, y: 0.0 },
             orientation: 0.0,
             battery: 100
         },
-        
-        // Control
         controlMode: 'Manual',
         isNavigating: false,
         
-        // Visualization
+        // Visualization loading states
         mapLoaded: false,
         robot3DLoaded: false,
         cameraLoaded: false,
         cameraStatus: 'Connecting to camera...',
-        
+        // 3D stuff
+        viewer: null,
+        tfClient: null,
+        urdfClient: null,
+        // 2D map
+        map2D: null,
+        // Camera
+        cameraViewer: null,
+        // Joystick
+        joystick: null,
         // ROS Topics
         cmdVelTopic: null,
         navGoalTopic: null,
         odomListener: null,
-        
-        // Visualization Objects
-        map2D: null,
-        robot3D: null,
-        joystick: null,
-        tfClient: null,
-        
-        // Waypoints from config
-        waypoints: ROBOT_CONFIG.waypoints
+        // Waypoints
+        waypoints: {
+            'sofa': { x: -2.65, y: -1.36, theta: -0.80, name: 'Sofa' },
+            'living_room': { x: 0.81, y: -1.29, theta: 0.99, name: 'Living Room' },
+            'kitchen': { x: 0.49, y: 2.97, theta: 0.46, name: 'Kitchen' }
+        }
     },
-    
+    // helper methods to connect to ROS
     methods: {
         connect: function() {
-            this.loading = true;
-            CONFIG_UTILS.log('info', 'Connecting to ROS at:', this.rosbridge_address);
-            
+            this.loading = true
             this.ros = new ROSLIB.Ros({
-                url: this.rosbridge_address
-            });
-            
+                url: this.rosbridge_address,
+                groovyCompatibility: false
+            })
             this.ros.on('connection', () => {
-                CONFIG_UTILS.log('info', 'Connected to ROS');
-                this.connected = true;
-                this.loading = false;
-                this.setupROSCommunication();
-                this.setupVisualization();
-                this.setupCamera();
-            });
-            
+                this.logs.unshift((new Date()).toTimeString() + ' - Connected!')
+                this.connected = true
+                this.loading = false
+                this.setupROSCommunication()
+                this.setup3DViewer()
+                this.setup2DMap()
+                this.setupCamera()
+                this.setupJoystick()
+            })
             this.ros.on('error', (error) => {
-                CONFIG_UTILS.log('error', 'ROS connection error:', error);
-                this.connected = false;
-                this.loading = false;
-                alert('Failed to connect to ROS: ' + error);
-            });
-            
+                this.logs.unshift((new Date()).toTimeString() + ` - Error: ${error}`)
+            })
             this.ros.on('close', () => {
-                CONFIG_UTILS.log('info', 'ROS connection closed');
-                this.connected = false;
-                this.loading = false;
-                this.cleanup();
-            });
+                this.logs.unshift((new Date()).toTimeString() + ' - Disconnected!')
+                this.connected = false
+                this.loading = false
+                this.unset3DViewer()
+                this.unsetCamera()
+                this.unsetMap()
+                this.unsetJoystick()
+            })
         },
-        
         disconnect: function() {
-            if (this.ros) {
-                this.ros.close();
-            }
+            this.ros.close()
         },
-        
+
         setupROSCommunication: function() {
-            // Command velocity publisher
+            // Command velocity publisher for joystick
             this.cmdVelTopic = new ROSLIB.Topic({
                 ros: this.ros,
-                name: CONFIG_UTILS.getTopic('cmd_vel'),
+                name: '/fastbot_1/cmd_vel',
                 messageType: 'geometry_msgs/Twist'
             });
             
-            // Navigation goal publisher
+            // Navigation goal publisher for waypoints
             this.navGoalTopic = new ROSLIB.Topic({
                 ros: this.ros,
-                name: CONFIG_UTILS.getTopic('nav_goal'),
+                name: '/move_base_simple/goal',
                 messageType: 'geometry_msgs/PoseStamped'
             });
             
-            // Odometry listener
+            // Odometry listener for robot status
             this.odomListener = new ROSLIB.Topic({
                 ros: this.ros,
-                name: CONFIG_UTILS.getTopic('odom'),
+                name: '/fastbot_1/odom',
                 messageType: 'nav_msgs/Odometry'
             });
             
             this.odomListener.subscribe((message) => {
                 this.updateRobotStatus(message);
             });
-            
-            // TF client for transforms
+        },
+
+        setup3DViewer() {
+            this.viewer = new ROS3D.Viewer({
+                background: '#cccccc',
+                divID: 'div3DViewer',
+                width: 400,
+                height: 300,
+                antialias: true,
+                fixedFrame: 'fastbot_1_odom'
+            })
+
+            // Add a grid.
+            this.viewer.addObject(new ROS3D.Grid({
+                color:'#0181c4',
+                cellSize: 0.5,
+                num_cells: 20
+            }))
+
+            // Setup a client to listen to TFs.
             this.tfClient = new ROSLIB.TFClient({
                 ros: this.ros,
                 angularThres: 0.01,
                 transThres: 0.01,
-                rate: ROBOT_CONFIG.ui.update_rate
+                rate: 10.0,
+                fixedFrame: 'fastbot_1_base_link'
+            })
+
+            // Setup the URDF client.
+            this.urdfClient = new ROS3D.UrdfClient({
+                ros: this.ros,
+                param: '/fastbot_1_robot_state_publisher:robot_description',
+                tfClient: this.tfClient,
+                // We use "path: location.origin + location.pathname"
+                // instead of "path: window.location.href" to remove query params,
+                // otherwise the assets fail to load
+                path: location.origin + location.pathname,
+                rootObject: this.viewer.scene,
+                loader: ROS3D.COLLADA_LOADER_2
+            })
+        },
+        unset3DViewer() {
+            document.getElementById('div3DViewer').innerHTML = ''
+            this.robot3DLoaded = false;
+        },
+
+        setup2DMap: function() {
+            this.map2D = new ROS2D.Viewer({
+                divID: 'mapViewer',
+                width: 400,
+                height: 300
             });
             
-            CONFIG_UTILS.log('info', 'ROS communication setup complete');
-        },
-        
-        setupVisualization: function() {
-            this.setup2DMap();
-            this.setup3DRobot();
-            this.setupJoystick();
-        },
-        
-        setup2DMap: function() {
-            try {
-                var mapContainer = document.getElementById('map-container');
-                if (!mapContainer) return;
-                
-                mapContainer.innerHTML = '';
-                
-                this.map2D = new ROS2D.Viewer({
-                    divID: 'map-container',
-                    width: mapContainer.offsetWidth,
-                    height: mapContainer.offsetHeight
+            // Add occupancy grid
+            var gridClient = new ROS2D.OccupancyGridClient({
+                ros: this.ros,
+                rootObject: this.map2D.scene,
+                topic: '/map'
+            });
+            
+            gridClient.on('change', () => {
+                this.mapLoaded = true;
+            });
+            
+            // Add robot marker
+            var robotMarker = new ROS2D.NavigationArrow({
+                size: 20,
+                strokeSize: 2,
+                fillColor: createjs.Graphics.getRGB(255, 128, 0),
+                pulse: true
+            });
+            
+            this.map2D.scene.addChild(robotMarker);
+            
+            // Update robot position on map
+            if (this.tfClient) {
+                this.tfClient.subscribe('fastbot_1_base_link', (tf) => {
+                    if (this.map2D && this.map2D.scene) {
+                        robotMarker.x = tf.translation.x * this.map2D.scene.scaleX;
+                        robotMarker.y = tf.translation.y * this.map2D.scene.scaleY;
+                        robotMarker.rotation = tf.rotation.z * 180 / Math.PI;
+                    }
                 });
-                
-                // Add occupancy grid
-                var gridClient = new ROS2D.OccupancyGridClient({
-                    ros: this.ros,
-                    rootObject: this.map2D.scene,
-                    topic: CONFIG_UTILS.getTopic('map')
-                });
-                
-                gridClient.on('change', () => {
-                    this.mapLoaded = true;
-                    CONFIG_UTILS.log('info', 'Map loaded successfully');
-                });
-                
-                // Add robot marker
-                var robotMarker = new ROS2D.NavigationArrow({
-                    size: 20,
-                    strokeSize: 2,
-                    fillColor: createjs.Graphics.getRGB(255, 128, 0),
-                    pulse: true
-                });
-                
-                this.map2D.scene.addChild(robotMarker);
-                
-                // Update robot position on map
-                if (this.tfClient) {
-                    this.tfClient.subscribe(CONFIG_UTILS.getFrame('base_link'), (tf) => {
-                        if (this.map2D && this.map2D.scene) {
-                            robotMarker.x = tf.translation.x * this.map2D.scene.scaleX;
-                            robotMarker.y = tf.translation.y * this.map2D.scene.scaleY;
-                            robotMarker.rotation = tf.rotation.z * 180 / Math.PI;
-                        }
-                    });
-                }
-                
-            } catch (error) {
-                CONFIG_UTILS.log('error', 'Error setting up 2D map:', error);
             }
         },
-        
-        setup3DRobot: function() {
-            try {
-                var robotContainer = document.getElementById('robot-container');
-                if (!robotContainer) return;
-                
-                robotContainer.innerHTML = '';
-                
-                this.robot3D = new ROS3D.Viewer({
-                    divID: 'robot-container',
-                    width: robotContainer.offsetWidth,
-                    height: robotContainer.offsetHeight,
-                    antialias: true,
-                    background: ROBOT_CONFIG.visualization.robot_3d.background_color
-                });
-                
-                // Add TF client for 3D
-                var tfClient3D = new ROSLIB.TFClient({
-                    ros: this.ros,
-                    angularThres: 0.01,
-                    transThres: 0.01,
-                    rate: ROBOT_CONFIG.ui.update_rate,
-                    fixedFrame: CONFIG_UTILS.getFrame('base_link')
-                });
-                
-                // Add robot model (simplified box)
-                var robotGeometry = new THREE.BoxGeometry(0.4, 0.3, 0.2);
-                var robotMaterial = new THREE.MeshLambertMaterial({ color: 0x00ff00 });
-                var robotMesh = new THREE.Mesh(robotGeometry, robotMaterial);
-                this.robot3D.scene.add(robotMesh);
-                
-                // Add grid
-                var gridHelper = new THREE.GridHelper(
-                    ROBOT_CONFIG.visualization.robot_3d.grid_size, 
-                    ROBOT_CONFIG.visualization.robot_3d.grid_divisions, 
-                    0x444444, 
-                    0x444444
-                );
-                this.robot3D.scene.add(gridHelper);
-                
-                // Add lights
-                var ambientLight = new THREE.AmbientLight(0x404040, 0.4);
-                this.robot3D.scene.add(ambientLight);
-                
-                var directionalLight = new THREE.DirectionalLight(0xffffff, 0.6);
-                directionalLight.position.set(1, 1, 1);
-                this.robot3D.scene.add(directionalLight);
-                
-                this.robot3DLoaded = true;
-                CONFIG_UTILS.log('info', '3D robot model loaded');
-                
-            } catch (error) {
-                CONFIG_UTILS.log('error', 'Error setting up 3D robot:', error);
-            }
+
+        unsetMap: function() {
+            document.getElementById('mapViewer').innerHTML = '';
         },
-        
-        setupJoystick: function() {
-            try {
-                var joystickContainer = document.getElementById('joystick-container');
-                if (!joystickContainer) return;
-                
-                this.joystick = nipplejs.create({
-                    zone: joystickContainer,
-                    mode: 'static',
-                    position: { left: '50%', top: '50%' },
-                    color: ROBOT_CONFIG.visualization.joystick.color,
-                    size: ROBOT_CONFIG.visualization.joystick.size,
-                    threshold: ROBOT_CONFIG.visualization.joystick.dead_zone,
-                    restJoystick: true
-                });
-                
-                this.joystick.on('move', (evt, data) => {
-                    if (!this.connected || !this.cmdVelTopic) return;
-                    
-                    var maxDistance = ROBOT_CONFIG.visualization.joystick.size / 2;
-                    var distance = Math.min(data.distance, maxDistance);
-                    var angle = data.angle.radian;
-                    
-                    var linear = (distance / maxDistance) * ROBOT_CONFIG.robot.max_linear_speed;
-                    var angular = -Math.sin(angle) * (distance / maxDistance) * ROBOT_CONFIG.robot.max_angular_speed;
-                    
-                    // Apply speed clamping
-                    linear = CONFIG_UTILS.clampLinearSpeed(linear * Math.cos(angle));
-                    angular = CONFIG_UTILS.clampAngularSpeed(angular);
-                    
-                    var message = new ROSLIB.Message({
-                        linear: {
-                            x: linear,
-                            y: 0,
-                            z: 0
-                        },
-                        angular: {
-                            x: 0,
-                            y: 0,
-                            z: angular
-                        }
-                    });
-                    
-                    this.cmdVelTopic.publish(message);
-                    this.controlMode = 'Manual';
-                });
-                
-                this.joystick.on('end', () => {
-                    if (!this.connected || !this.cmdVelTopic) return;
-                    
-                    var message = new ROSLIB.Message({
-                        linear: { x: 0, y: 0, z: 0 },
-                        angular: { x: 0, y: 0, z: 0 }
-                    });
-                    
-                    this.cmdVelTopic.publish(message);
-                });
-                
-                CONFIG_UTILS.log('info', 'Joystick setup complete');
-                
-            } catch (error) {
-                CONFIG_UTILS.log('error', 'Error setting up joystick:', error);
-            }
-        },
-        
+
         setupCamera: function() {
             try {
                 var without_wss = this.rosbridge_address.split('wss://')[1];
-                console.log(without_wss);
                 var domain = without_wss.split('/')[0] + '/' + without_wss.split('/')[1];
-                console.log(domain);
                 var host = domain + '/cameras';
                 
-                var viewer = new MJPEGCANVAS.Viewer({
-                    divID: 'camera-container',
+                this.cameraViewer = new MJPEGCANVAS.Viewer({
+                    divID: 'cameraViewer',
                     host: host,
-                    width: ROBOT_CONFIG.camera.width,
-                    height: ROBOT_CONFIG.camera.height,
-                    topic: CONFIG_UTILS.getTopic('camera'),
+                    width: 400,
+                    height: 300,
+                    topic: '/fastbot_1/camera/image_raw',
                     ssl: true,
                 });
                 
                 this.cameraLoaded = true;
                 this.cameraStatus = 'Camera connected';
-                CONFIG_UTILS.log('info', 'Camera setup complete');
-                
             } catch (error) {
-                CONFIG_UTILS.log('error', 'Error setting up camera:', error);
+                console.error('Camera setup error:', error);
                 this.cameraStatus = 'Camera unavailable';
             }
         },
-        
-        updateRobotStatus: function(odomMessage) {
-            try {
-                var pose = odomMessage.pose.pose;
-                var twist = odomMessage.twist.twist;
+
+        unsetCamera: function() {
+            document.getElementById('cameraViewer').innerHTML = '';
+        },
+
+        setupJoystick: function() {
+            this.joystick = nipplejs.create({
+                zone: document.getElementById('joystickContainer'),
+                mode: 'static',
+                position: { left: '50%', top: '50%' },
+                color: 'grey',
+                size: 120
+            });
+            
+            this.joystick.on('move', (evt, data) => {
+                if (!this.connected || !this.cmdVelTopic) return;
                 
-                // Update position
-                this.robotStatus.position.x = pose.position.x;
-                this.robotStatus.position.y = pose.position.y;
+                var maxDistance = 60;
+                var distance = Math.min(data.distance, maxDistance);
+                var angle = data.angle.radian;
                 
-                // Update orientation (quaternion to euler)
-                var quat = pose.orientation;
-                var siny_cosp = 2 * (quat.w * quat.z + quat.x * quat.y);
-                var cosy_cosp = 1 - 2 * (quat.y * quat.y + quat.z * quat.z);
-                var theta = Math.atan2(siny_cosp, cosy_cosp);
-                this.robotStatus.orientation = theta * 180 / Math.PI;
+                var linear = (distance / maxDistance) * 0.5 * Math.cos(angle);
+                var angular = -Math.sin(angle) * (distance / maxDistance) * 1.0;
                 
-                // Update speed
-                this.robotStatus.speed = Math.sqrt(
-                    twist.linear.x * twist.linear.x + 
-                    twist.linear.y * twist.linear.y
-                );
+                var message = new ROSLIB.Message({
+                    linear: { x: linear, y: 0, z: 0 },
+                    angular: { x: 0, y: 0, z: angular }
+                });
                 
-            } catch (error) {
-                CONFIG_UTILS.log('error', 'Error updating robot status:', error);
+                this.cmdVelTopic.publish(message);
+                this.controlMode = 'Manual';
+            });
+            
+            this.joystick.on('end', () => {
+                if (this.connected && this.cmdVelTopic) {
+                    var message = new ROSLIB.Message({
+                        linear: { x: 0, y: 0, z: 0 },
+                        angular: { x: 0, y: 0, z: 0 }
+                    });
+                    this.cmdVelTopic.publish(message);
+                }
+            });
+        },
+
+        unsetJoystick: function() {
+            if (this.joystick) {
+                this.joystick.destroy();
             }
         },
-        
+
+        updateRobotStatus: function(odomMessage) {
+            var pose = odomMessage.pose.pose;
+            var twist = odomMessage.twist.twist;
+            
+            // Update position
+            this.robotStatus.position.x = pose.position.x;
+            this.robotStatus.position.y = pose.position.y;
+            
+            // Update orientation (quaternion to euler)
+            var quat = pose.orientation;
+            var siny_cosp = 2 * (quat.w * quat.z + quat.x * quat.y);
+            var cosy_cosp = 1 - 2 * (quat.y * quat.y + quat.z * quat.z);
+            var theta = Math.atan2(siny_cosp, cosy_cosp);
+            this.robotStatus.orientation = theta * 180 / Math.PI;
+            
+            // Update speed
+            this.robotStatus.speed = Math.sqrt(
+                twist.linear.x * twist.linear.x + 
+                twist.linear.y * twist.linear.y
+            );
+        },
+
         goToWaypoint: function(waypointKey) {
-            if (!this.connected || !this.navGoalTopic) {
-                alert('Not connected to ROS');
-                return;
-            }
+            if (!this.connected || !this.navGoalTopic) return;
             
-            var waypoint = CONFIG_UTILS.getWaypoint(waypointKey);
-            if (!waypoint || !CONFIG_UTILS.isValidWaypoint(waypoint)) {
-                alert('Invalid waypoint: ' + waypointKey);
-                return;
-            }
-            
+            var waypoint = this.waypoints[waypointKey];
             this.isNavigating = true;
             this.controlMode = 'Navigation to ' + waypoint.name;
-            CONFIG_UTILS.log('info', 'Navigating to waypoint:', waypoint.name);
             
             var goal = new ROSLIB.Message({
                 header: {
-                    frame_id: CONFIG_UTILS.getFrame('map'),
+                    frame_id: 'map',
                     stamp: {
                         sec: Math.floor(Date.now() / 1000),
                         nanosec: (Date.now() % 1000) * 1000000
                     }
                 },
                 pose: {
-                    position: {
-                        x: waypoint.x,
-                        y: waypoint.y,
-                        z: 0.0
-                    },
+                    position: { x: waypoint.x, y: waypoint.y, z: 0.0 },
                     orientation: {
-                        x: 0.0,
-                        y: 0.0,
+                        x: 0.0, y: 0.0,
                         z: Math.sin(waypoint.theta / 2),
                         w: Math.cos(waypoint.theta / 2)
                     }
@@ -387,17 +315,15 @@ var app = new Vue({
             
             this.navGoalTopic.publish(goal);
             
-            // Re-enable navigation after timeout
+            // Reset navigation state after 5 seconds
             setTimeout(() => {
                 this.isNavigating = false;
                 this.controlMode = 'Manual';
-            }, ROBOT_CONFIG.safety.path_planning_timeout / 6);
+            }, 5000);
         },
-        
+
         emergencyStop: function() {
             if (!this.connected || !this.cmdVelTopic) return;
-            
-            CONFIG_UTILS.log('warn', 'Emergency stop activated');
             
             var message = new ROSLIB.Message({
                 linear: { x: 0, y: 0, z: 0 },
@@ -408,56 +334,16 @@ var app = new Vue({
             this.controlMode = 'EMERGENCY STOP';
             this.isNavigating = false;
             
-            // Reset control mode after 3 seconds
             setTimeout(() => {
                 this.controlMode = 'Manual';
             }, 3000);
-        },
-        
-        cleanup: function() {
-            // Clean up camera
-            var cameraContainer = document.getElementById('camera-container');
-            if (cameraContainer) {
-                cameraContainer.innerHTML = '<div class="loading-text">Connecting to camera...</div>';
-            }
-            
-            // Reset status
-            this.mapLoaded = false;
-            this.robot3DLoaded = false;
-            this.cameraLoaded = false;
-            this.cameraStatus = 'Connecting to camera...';
-            this.controlMode = 'Manual';
-            this.isNavigating = false;
-            
-            CONFIG_UTILS.log('info', 'Cleanup complete');
         }
     },
     
     mounted: function() {
-        CONFIG_UTILS.log('info', 'FastBot Control Interface loaded');
-        CONFIG_UTILS.log('info', 'Configuration loaded:', ROBOT_CONFIG);
-        
         // Simulate battery level updates
         setInterval(() => {
             this.robotStatus.battery = Math.max(20, 100 - Math.random() * 3);
-        }, ROBOT_CONFIG.ui.battery_update_interval);
-        
-        // Handle window resize
-        window.addEventListener('resize', () => {
-            setTimeout(() => {
-                if (this.map2D) {
-                    var mapContainer = document.getElementById('map-container');
-                    if (mapContainer) {
-                        this.map2D.resize(mapContainer.offsetWidth, mapContainer.offsetHeight);
-                    }
-                }
-                if (this.robot3D) {
-                    var robotContainer = document.getElementById('robot-container');
-                    if (robotContainer) {
-                        this.robot3D.resize(robotContainer.offsetWidth, robotContainer.offsetHeight);
-                    }
-                }
-            }, 100);
-        });
+        }, 5000);
     }
-});
+})

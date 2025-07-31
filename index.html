@@ -14,27 +14,27 @@
     <script src="https://cdn.jsdelivr.net/npm/vue@2.6.14/dist/vue.min.js"></script>
     
     <!-- ROS Libraries -->
-    <script src="https://s3.eu-west-1.amazonaws.com/rosject.io/js/roslib.min.js"></script>
+    <script src="./libs/roslib.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/eventemitter2@5.0.1/lib/eventemitter2.min.js"></script>
     
     <!-- Camera streaming -->
     <script type="text/javascript" src="mjpegcanvas.min.js"></script>
     
     <!-- ROS Visualization Libraries -->
-    <script src="https://s3.eu-west-1.amazonaws.com/rosject.io/js/easeljs.min.js"></script>
-    <script src="https://s3.eu-west-1.amazonaws.com/rosject.io/js/ros2d.min.js"></script>
-    <script src="https://s3.eu-west-1.amazonaws.com/rosject.io/js/threejs.min.js"></script>
-    <script src="https://s3.eu-west-1.amazonaws.com/rosject.io/js/ros3d.min.js"></script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/easeljs/lib/easeljs.min.js"></script>
+    <script src="./libs/ros2d.js"></script>
+    <script src="./libs/three.min.js"></script>
+    <script src="./libs/ColladaLoader.js"></script>
+    <script src="./libs/ColladaLoader2.js"></script>
+    <script src="./libs/STLLoader.js"></script>
+    <script src="./libs/ros3d.min.js"></script>
     
     <!-- Joystick -->
     <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.1/dist/nipplejs.min.js"></script>
     
-    <!-- FastBot Configuration -->
-    <script src="config.js"></script>
-    
     <style>
         body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: rgba(80, 80, 80, 0.95);
             min-height: 100vh;
             color: #333;
         }
@@ -243,7 +243,7 @@
                     <div class="card">
                         <div class="card-body">
                             <h5 class="card-title">Environment Map</h5>
-                            <div class="visualization-container" id="map-container">
+                            <div class="visualization-container" id="mapViewer">
                                 <div class="loading-text" v-if="!mapLoaded">
                                     Loading map...
                                 </div>
@@ -288,7 +288,7 @@
                     <div class="card">
                         <div class="card-body">
                             <h5 class="card-title">Robot 3D Model</h5>
-                            <div class="visualization-container" id="robot-container">
+                            <div class="visualization-container" id="div3DViewer">
                                 <div class="loading-text" v-if="!robot3DLoaded">
                                     Loading 3D model...
                                 </div>
@@ -299,8 +299,8 @@
                     <!-- Manual Control -->
                     <div class="card">
                         <div class="card-body text-center">
-                            <h5 class="card-title">Manual Control</h5>
-                            <div class="joystick-container" id="joystick-container"></div>
+                            <h5 class="card-title">Joystick</h5>
+                            <div class="joystick-container" id="joystickContainer"></div>
                             <div class="mt-3">
                                 <span class="badge badge-info">
                                     Mode: {{ controlMode }}
@@ -316,7 +316,7 @@
                     <div class="card">
                         <div class="card-body">
                             <h5 class="card-title">Camera Image Stream</h5>
-                            <div class="camera-container" id="camera-container">
+                            <div class="camera-container" id="cameraViewer">
                                 <div class="loading-text" v-if="!cameraLoaded">
                                     {{ cameraStatus }}
                                 </div>
@@ -327,7 +327,7 @@
                     <!-- Waypoint Navigation -->
                     <div class="card">
                         <div class="card-body">
-                            <h5 class="card-title">Navigation Waypoints</h5>
+                            <h5 class="card-title">Waypoint</h5>
                             <div class="waypoint-grid">
                                 <button 
                                     v-for="(waypoint, key) in waypoints"
@@ -344,7 +344,7 @@
                                 @click="emergencyStop"
                                 :disabled="!connected"
                             >
-                                EMERGENCY STOP
+                                STOP
                             </button>
                         </div>
                     </div>
@@ -354,11 +354,15 @@
     </div>
 
     <script type="text/javascript">
-        // Load main.js with cache busting to avoid caching issues
-        // This is done the same way as your reference files
+        // We could have loaded main.js simply with:
+        //  <script type="text/javascript" src="main.js">
+        //
+        // BUT we were having caching-related problems.
+        // Loading main.js with a Date.now() in the URL we avoid using cache
+
         var script = document.createElement('script');
         script.type = 'text/javascript';
-        script.src = 'main.js?v=5.' + Date.now();
+        script.src = 'main.js?v=16.' + Date.now();
         document.head.appendChild(script);
     </script>
 </body>
